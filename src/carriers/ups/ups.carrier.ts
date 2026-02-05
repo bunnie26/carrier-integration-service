@@ -1,25 +1,28 @@
 import axios, { AxiosError } from "axios";
 import { Carrier } from "../../core/carrier.interface";
 import { RateRequest, RateQuote } from "../../core/types";
+import { CarrierError } from "../../core/errors";
 import { getUpsToken, clearUpsTokenCache } from "./ups.auth";
 import { toUpsRateRequest } from "./ups.mapper";
 import { UPS_BASE_URL } from "../../config/env";
 
 function normalizeRateResponse(data: unknown): RateQuote[] {
   if (!data || typeof data !== "object") {
-    throw new Error("Invalid rate response");
+    throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
   }
   const obj = data as Record<string, unknown>;
   const rateResponse = obj.RateResponse;
   if (!rateResponse || typeof rateResponse !== "object") {
-    throw new Error("Invalid rate response");
+    throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
   }
   const ratedShipment = (rateResponse as Record<string, unknown>).RatedShipment;
   if (!Array.isArray(ratedShipment)) {
-    throw new Error("Invalid rate response");
+    throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
   }
   return ratedShipment.map((r: unknown) => {
-    if (!r || typeof r !== "object") throw new Error("Invalid rate response");
+    if (!r || typeof r !== "object") {
+      throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
+    }
     const row = r as Record<string, unknown>;
     const service = row.Service as Record<string, unknown> | undefined;
     const totalCharges = row.TotalCharges as Record<string, unknown> | undefined;
@@ -28,7 +31,7 @@ function normalizeRateResponse(data: unknown): RateQuote[] {
     const monetaryValue = totalCharges?.MonetaryValue;
     const currencyCode = totalCharges?.CurrencyCode;
     if (code == null || monetaryValue == null || currencyCode == null) {
-      throw new Error("Invalid rate response");
+      throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
     }
     return {
       carrier: "ups" as const,
@@ -67,12 +70,22 @@ export class UpsCarrier implements Carrier {
         const data = axiosErr.response.data as Record<string, unknown>;
         const msg =
           typeof data.message === "string" ? data.message : `HTTP ${axiosErr.response.status}`;
-        throw new Error(String(msg));
+        throw new CarrierError("carrier_error", String(msg), axiosErr.response?.status, "ups");
       }
       if (axiosErr.response?.status != null) {
-        throw new Error(`HTTP ${axiosErr.response.status}`);
+        throw new CarrierError(
+          "carrier_error",
+          `HTTP ${axiosErr.response.status}`,
+          axiosErr.response.status,
+          "ups"
+        );
       }
-      throw err;
+      throw new CarrierError(
+        "carrier_error",
+        err instanceof Error ? err.message : "Request failed",
+        undefined,
+        "ups"
+      );
     }
   }
 }
