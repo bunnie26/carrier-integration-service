@@ -1,1 +1,15 @@
-{}
+{
+    "RateResponse": {
+        "RatedShipment": [
+            {
+                "Service": {
+                    "Code": "03"
+                },
+                "TotalCharges": {
+                    "MonetaryValue": "12.34",
+                    "CurrencyCode": "USD"
+                }
+            }
+        ]
+    }
+}
