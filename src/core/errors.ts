@@ -12,6 +12,16 @@ export class CarrierError extends Error {
   }
   
   export function isCarrierError(err: unknown): err is CarrierError {
-    return err instanceof CarrierError;
+  return err instanceof CarrierError;
+}
+
+function hasMessageProperty(x: unknown): x is { message: unknown } {
+  return x !== null && typeof x === "object" && "message" in x;
+}
+
+export function getHttpErrorMessage(responseData: unknown, fallback: string): string {
+  if (hasMessageProperty(responseData) && typeof responseData.message === "string") {
+    return responseData.message;
   }
-  
+  return fallback;
+}

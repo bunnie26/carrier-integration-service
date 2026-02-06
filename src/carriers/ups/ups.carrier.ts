@@ -1,49 +1,30 @@
 import axios, { AxiosError } from "axios";
 import { Carrier } from "../../core/carrier.interface";
 import { RateRequest, RateQuote } from "../../core/types";
-import { CarrierError } from "../../core/errors";
+import { CarrierError, getHttpErrorMessage } from "../../core/errors";
 import { getUpsToken, clearUpsTokenCache } from "./ups.auth";
 import { toUpsRateRequest } from "./ups.mapper";
+import { upsRateResponseSchema } from "./ups.schemas";
 import { UPS_BASE_URL } from "../../config/env";
 
 function normalizeRateResponse(data: unknown): RateQuote[] {
-  if (!data || typeof data !== "object") {
-    throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
+  const parsed = upsRateResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new CarrierError(
+      "invalid_rate_response",
+      "Invalid rate response",
+      undefined,
+      "ups"
+    );
   }
-  const obj = data as Record<string, unknown>;
-  const rateResponse = obj.RateResponse;
-  if (!rateResponse || typeof rateResponse !== "object") {
-    throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
-  }
-  const ratedShipment = (rateResponse as Record<string, unknown>).RatedShipment;
-  if (!Array.isArray(ratedShipment)) {
-    throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
-  }
-  return ratedShipment.map((r: unknown) => {
-    if (!r || typeof r !== "object") {
-      throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
-    }
-    const row = r as Record<string, unknown>;
-    const service = row.Service as Record<string, unknown> | undefined;
-    const totalCharges = row.TotalCharges as Record<string, unknown> | undefined;
-    const guaranteedDelivery = row.GuaranteedDelivery as Record<string, unknown> | undefined;
-    const code = service?.Code;
-    const monetaryValue = totalCharges?.MonetaryValue;
-    const currencyCode = totalCharges?.CurrencyCode;
-    if (code == null || monetaryValue == null || currencyCode == null) {
-      throw new CarrierError("invalid_rate_response", "Invalid rate response", undefined, "ups");
-    }
-    return {
-      carrier: "ups" as const,
-      service: String(code),
-      amount: Number(monetaryValue),
-      currency: String(currencyCode),
-      deliveryDays:
-        guaranteedDelivery?.BusinessDaysInTransit != null
-          ? Number(guaranteedDelivery.BusinessDaysInTransit)
-          : undefined,
-    };
-  });
+
+  return parsed.data.RateResponse.RatedShipment.map((r): RateQuote => ({
+    carrier: "ups",
+    service: r.Service.Code,
+    amount: r.TotalCharges.MonetaryValue,
+    currency: r.TotalCharges.CurrencyCode,
+    deliveryDays: r.GuaranteedDelivery?.BusinessDaysInTransit,
+  }));
 }
 
 export class UpsCarrier implements Carrier {
@@ -56,9 +37,17 @@ export class UpsCarrier implements Carrier {
     try {
       const res = await axios.post(url, payload, config);
       return normalizeRateResponse(res.data);
-    } catch (err) {
-      const axiosErr = err as AxiosError<unknown>;
-      if (axiosErr.response?.status === 401) {
+    } catch (err: unknown) {
+      if (!(err instanceof AxiosError)) {
+        throw new CarrierError(
+          "carrier_error",
+          err instanceof Error ? err.message : "Request failed",
+          undefined,
+          "ups"
+        );
+      }
+
+      if (err.response?.status === 401) {
         clearUpsTokenCache();
         const newToken = await getUpsToken();
         const retryRes = await axios.post(url, payload, {
@@ -66,26 +55,13 @@ export class UpsCarrier implements Carrier {
         });
         return normalizeRateResponse(retryRes.data);
       }
-      if (axiosErr.response?.data != null) {
-        const data = axiosErr.response.data as Record<string, unknown>;
-        const msg =
-          typeof data.message === "string" ? data.message : `HTTP ${axiosErr.response.status}`;
-        throw new CarrierError("carrier_error", String(msg), axiosErr.response?.status, "ups");
-      }
-      if (axiosErr.response?.status != null) {
-        throw new CarrierError(
-          "carrier_error",
-          `HTTP ${axiosErr.response.status}`,
-          axiosErr.response.status,
-          "ups"
-        );
-      }
-      throw new CarrierError(
-        "carrier_error",
-        err instanceof Error ? err.message : "Request failed",
-        undefined,
-        "ups"
+
+      const status = err.response?.status;
+      const msg = getHttpErrorMessage(
+        err.response?.data,
+        status != null ? `HTTP ${status}` : "Request failed"
       );
+      throw new CarrierError("carrier_error", msg, status, "ups");
     }
   }
 }
